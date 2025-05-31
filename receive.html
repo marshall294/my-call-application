@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Receiver</title>
+  <style>
+    #status {
+      font-size: 1.2em;
+      margin-bottom: 10px;
+    }
+    #enableSound {
+      margin-bottom: 15px;
+      padding: 8px 16px;
+      font-size: 1em;
+    }
+  </style>
+</head>
+<body>
+  <h2>Waiting for Call...</h2>
+  <button id="enableSound">Enable Ringtone</button>
+  <div id="status">No call yet.</div>
+  <button id="answerCall" disabled>Answer Call</button>
+  <button id="endCall" disabled>End Call</button>
+  <audio id="remoteAudio" autoplay></audio>
+  <audio id="ringtone" loop src="https://actions.google.com/sounds/v1/alarms/phone_alerts_and_rings.ogg"></audio>
+
+  <!-- Firebase SDK -->
+  <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore-compat.js"></script>
+
+  <script>
+    const firebaseConfig = {
+      apiKey: "AIzaSyDzWe0sMFecKa9sHk30pXat5qrT4yDyuJ4",
+      authDomain: "soccer2-c47c2.firebaseapp.com",
+      projectId: "soccer2-c47c2",
+      storageBucket: "soccer2-c47c2.appspot.com",
+      messagingSenderId: "942310698005",
+      appId: "1:942310698005:web:2f5230da671ef0b47db21c"
+    };
+
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.firestore();
+
+    const servers = {
+      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+      iceCandidatePoolSize: 10,
+    };
+
+    let pc, callDoc, offerCandidates, answerCandidates;
+    let localStream, remoteStream = new MediaStream();
+    let soundEnabled = false;
+
+    const statusEl = document.getElementById('status');
+    const answerBtn = document.getElementById('answerCall');
+    const endBtn = document.getElementById('endCall');
+    const remoteAudio = document.getElementById('remoteAudio');
+    const ringtone = document.getElementById('ringtone');
+    const enableSoundBtn = document.getElementById('enableSound');
+
+    remoteAudio.srcObject = remoteStream;
+
+    enableSoundBtn.onclick = () => {
+      ringtone.play().then(() => {
+        ringtone.pause();
+        soundEnabled = true;
+        enableSoundBtn.disabled = true;
+        enableSoundBtn.style.display = 'none';
+        listenForCalls(); // Start call listening after enabling sound
+      }).catch(err => {
+        alert("Click to enable ringtone. Your browser blocked auto-play.");
+      });
+    };
+
+    answerBtn.onclick = answerCall;
+    endBtn.onclick = endCall;
+
+    function listenForCalls() {
+      callDoc = db.collection('calls').doc('activeCall');
+
+      callDoc.onSnapshot(snapshot => {
+        const data = snapshot.data();
+        if (!data) {
+          stopCall("Call ended.");
+          return;
+        }
+
+        if (data.offer && !pc) {
+          statusEl.textContent = `Incoming call from ${data.offer.callerName} (${data.offer.reason})`;
+          answerBtn.disabled = false;
+          if (soundEnabled) {
+            ringtone.play().catch(console.warn);
+          }
+        }
+      });
+    }
+
+    async function answerCall() {
+      answerBtn.disabled = true;
+      ringtone.pause();
+      statusEl.textContent = "Answering call...";
+
+      pc = new RTCPeerConnection(servers);
+      offerCandidates = callDoc.collection('offerCandidates');
+      answerCandidates = callDoc.collection('answerCandidates');
+
+      pc.ontrack = event => {
+        remoteStream.addTrack(event.track);
+      };
+
+      pc.onicecandidate = event => {
+        if (event.candidate) {
+          answerCandidates.add(event.candidate.toJSON());
+        }
+      };
+
+      localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+
+      const callData = (await callDoc.get()).data();
+      await pc.setRemoteDescription(new RTCSessionDescription(callData.offer));
+
+      const answerDescription = await pc.createAnswer();
+      await pc.setLocalDescription(answerDescription);
+      await callDoc.update({ answer: { type: answerDescription.type, sdp: answerDescription.sdp } });
+
+      offerCandidates.onSnapshot(snapshot => {
+        snapshot.docChanges().forEach(change => {
+          if (change.type === 'added') {
+            pc.addIceCandidate(new RTCIceCandidate(change.doc.data()));
+          }
+        });
+      });
+
+      statusEl.textContent = "Call connected.";
+      endBtn.disabled = false;
+    }
+
+    async function endCall() {
+      if (pc) pc.close();
+
+      if (callDoc) {
+        await Promise.all([
+          deleteCollection(offerCandidates),
+          deleteCollection(answerCandidates),
+          callDoc.delete()
+        ]);
+      }
+
+      stopCall("Call ended.");
+    }
+
+    async function deleteCollection(collection) {
+      const snapshot = await collection.get();
+      const deletions = snapshot.docs.map(doc => doc.ref.delete());
+      return Promise.all(deletions);
+    }
+
+    function stopCall(message) {
+      statusEl.textContent = message;
+      ringtone.pause();
+      answerBtn.disabled = true;
+      endBtn.disabled = true;
+      remoteStream.getTracks().forEach(track => track.stop());
+      localStream?.getTracks().forEach(track => track.stop());
+      remoteAudio.srcObject = null;
+      if (pc) {
+        pc.close();
+        pc = null;
+      }
+    }
+  </script>
+</body>
+</html>
