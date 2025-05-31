@@ -1,74 +1,71 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Fantasy Call - Caller</title>
+  <meta charset="UTF-8">
+  <title>Caller</title>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore-compat.js"></script>
+  <script src="https://webrtc.github.io/adapter/adapter-latest.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Roboto&display=swap" rel="stylesheet">
   <style>
     body {
+      font-family: 'Roboto', sans-serif;
+      background: #e5ddd5;
       margin: 0;
-      font-family: "Segoe UI", sans-serif;
-      background: #111;
-      color: #fff;
       display: flex;
+      flex-direction: column;
       align-items: center;
       justify-content: center;
       height: 100vh;
     }
-    .card {
-      background: #1e1e1e;
-      padding: 30px;
-      border-radius: 16px;
-      width: 90%;
-      max-width: 400px;
-      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+    .call-container {
+      background: #fff;
+      border-radius: 15px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+      padding: 20px;
+      width: 360px;
       text-align: center;
     }
-    .card h2 {
-      margin-bottom: 20px;
-      font-weight: 500;
-    }
-    input, textarea, button {
-      width: 100%;
+    input, button {
+      width: 90%;
       padding: 12px;
-      margin-bottom: 16px;
-      border: none;
+      margin-top: 10px;
       border-radius: 8px;
+      border: 1px solid #ccc;
       font-size: 16px;
     }
-    textarea {
-      resize: none;
-      height: 80px;
-    }
-    #startCall {
+    button.call {
       background-color: #25d366;
-      color: white;
+      color: #fff;
+      border: none;
     }
-    #startCall:disabled {
-      background-color: #4c9f80;
-      cursor: not-allowed;
+    button.end {
+      background-color: #ff4d4f;
+      color: #fff;
+      border: none;
     }
-    #endCall {
-      background-color: #f44336;
-      color: white;
+    #ringing {
+      margin-top: 10px;
+      font-weight: bold;
+      color: #555;
     }
-    #endCall:disabled {
-      background-color: #914747;
-      cursor: not-allowed;
+    video {
+      width: 10%;
+      border-radius: 10px;
+      margin-top: 15px;
     }
   </style>
 </head>
 <body>
-  <div class="card">
-    <h2>Start Voice Call</h2>
-    <input type="text" id="callerName" placeholder="Your name" />
-    <textarea id="callReason" placeholder="Reason for calling (optional)"></textarea>
-    <button id="startCall">📞 Start Call</button>
-    <button id="endCall" disabled>🔴 End Call</button>
+  <div class="call-container">
+    <h2>📞 Make a Call</h2>
+    <input type="text" id="callerName" placeholder="Your Name">
+    <input type="text" id="reason" placeholder="Reason for Call">
+    <button class="call" onclick="startCall()">Call</button>
+    <button class="end" onclick="endCall()">End Call</button>
+    <div id="ringing">Waiting to initiate...</div>
   </div>
 
-  <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore-compat.js"></script>
   <script>
     const firebaseConfig = {
       apiKey: "AIzaSyDzWe0sMFecKa9sHk30pXat5qrT4yDyuJ4",
@@ -81,74 +78,89 @@
 
     firebase.initializeApp(firebaseConfig);
     const db = firebase.firestore();
-    const servers = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
 
-    const pc = new RTCPeerConnection(servers);
-    let callDoc, offerCandidates, answerCandidates;
+    const ringingDiv = document.getElementById('ringing');
+    const remoteVideo = document.getElementById('remoteVideo');
+    let callDoc, peerConnection;
+    const config = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 
-    document.getElementById('startCall').onclick = async () => {
-      const name = document.getElementById('callerName').value.trim();
-      const reason = document.getElementById('callReason').value.trim();
-      if (!name) return alert("Please enter your name");
+    async function startCall() {
+      const callerName = document.getElementById('callerName').value.trim();
+      const reason = document.getElementById('reason').value.trim();
 
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      stream.getTracks().forEach(track => pc.addTrack(track, stream));
+      if (!callerName || !reason) {
+        alert("Please enter your name and reason for call.");
+        return;
+      }
 
-      callDoc = db.collection('calls').doc('activeCall');
-      offerCandidates = callDoc.collection('offerCandidates');
-      answerCandidates = callDoc.collection('answerCandidates');
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
 
-      pc.onicecandidate = e => {
+      peerConnection = new RTCPeerConnection(config);
+      stream.getTracks().forEach(track => peerConnection.addTrack(track, stream));
+
+      peerConnection.onicecandidate = e => {
         if (e.candidate) {
-          offerCandidates.add(e.candidate.toJSON());
+          callDoc.collection('offerCandidates').add(e.candidate.toJSON());
         }
       };
 
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
+      peerConnection.ontrack = e => {
+        remoteVideo.srcObject = e.streams[0];
+      };
 
-      await callDoc.set({
+      const offer = await peerConnection.createOffer();
+      await peerConnection.setLocalDescription(offer);
+
+      callDoc = await db.collection("calls").add({
+        callerName,
+        reason,
+        status: "ringing",
+        timestamp: Date.now(),
+        ended: false,
         offer: {
           type: offer.type,
-          sdp: offer.sdp,
-          callerName: name,
-          callReason: reason
-        },
-        ringing: true,
-        timestamp: Date.now()
-      });
-
-      answerCandidates.onSnapshot(snapshot => {
-        snapshot.docChanges().forEach(change => {
-          if (change.type === "added") {
-            const candidate = new RTCIceCandidate(change.doc.data());
-            pc.addIceCandidate(candidate);
-          }
-        });
-      });
-
-      callDoc.onSnapshot(snapshot => {
-        const data = snapshot.data();
-        if (data?.answer && !pc.currentRemoteDescription) {
-          pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+          sdp: offer.sdp
         }
       });
 
-      document.getElementById('startCall').disabled = true;
-      document.getElementById('endCall').disabled = false;
-    };
+      ringingDiv.innerText = '📡 Ringing...';
 
-    document.getElementById('endCall').onclick = async () => {
-      pc.close();
+      callDoc.onSnapshot(snapshot => {
+        const data = snapshot.data();
+        if (!data) return;
+
+        if (data.ended) {
+          ringingDiv.innerText = "❌ Call Ended";
+          peerConnection?.close();
+          setTimeout(() => window.location.reload(), 2000);
+        } else if (data.status === 'answered' && data.answer) {
+          peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
+          ringingDiv.innerText = "✅ Call Connected";
+        }
+      });
+
+      callDoc.collection('answerCandidates').onSnapshot(snapshot => {
+        snapshot.docChanges().forEach(change => {
+          if (change.type === 'added') {
+            const data = change.doc.data();
+            const candidate = new RTCIceCandidate({
+              candidate: data.candidate,
+              sdpMid: data.sdpMid,
+              sdpMLineIndex: data.sdpMLineIndex
+            });
+            peerConnection.addIceCandidate(candidate);
+          }
+        });
+      });
+    }
+
+    async function endCall() {
       if (callDoc) {
-        const clean = async col => {
-          const snap = await col.get();
-          return Promise.all(snap.docs.map(doc => doc.ref.delete()));
-        };
-        await Promise.all([clean(offerCandidates), clean(answerCandidates), callDoc.delete()]);
+        await callDoc.update({ ended: true });
+        peerConnection?.close();
+        ringingDiv.innerText = "❌ Call Ended";
       }
-      location.reload();
-    };
+    }
   </script>
 </body>
 </html>
