@@ -3,29 +3,87 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Receiver</title>
+  <title>Fantasy Call - Receiver</title>
   <style>
-    #status {
-      font-size: 1.2em;
-      margin-bottom: 10px;
+    body {
+      margin: 0;
+      font-family: "Segoe UI", sans-serif;
+      background: #121212;
+      color: white;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
     }
-    #enableSound {
-      margin-bottom: 15px;
-      padding: 8px 16px;
-      font-size: 1em;
+
+    .card {
+      background: #1e1e1e;
+      padding: 30px;
+      border-radius: 16px;
+      width: 90%;
+      max-width: 420px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+      text-align: center;
+    }
+
+    h2 {
+      font-weight: 500;
+      margin-bottom: 20px;
+    }
+
+    p {
+      margin: 10px 0;
+      font-size: 15px;
+    }
+
+    .info {
+      margin-top: 10px;
+      background: #2a2a2a;
+      padding: 12px;
+      border-radius: 10px;
+    }
+
+    button {
+      width: 100%;
+      padding: 12px;
+      margin-top: 20px;
+      font-size: 16px;
+      font-weight: 600;
+      border: none;
+      border-radius: 8px;
+      background: #25d366;
+      color: white;
+      cursor: pointer;
+    }
+
+    button.end {
+      background: #e53935;
+    }
+
+    button:disabled {
+      background: #4c9f80;
+      cursor: not-allowed;
+    }
+
+    audio {
+      display: none;
     }
   </style>
 </head>
 <body>
-  <h2>Waiting for Call...</h2>
-  <button id="enableSound">Enable Ringtone</button>
-  <div id="status">No call yet.</div>
-  <button id="answerCall" disabled>Answer Call</button>
-  <button id="endCall" disabled>End Call</button>
-  <audio id="remoteAudio" autoplay></audio>
-  <audio id="ringtone" loop src="https://actions.google.com/sounds/v1/alarms/phone_alerts_and_rings.ogg"></audio>
+  <div class="card">
+    <h2>📞 Incoming Call</h2>
+    <p id="status">Waiting for a call...</p>
+    <div id="callInfo" class="info" style="display: none;">
+      <p><strong>Caller:</strong> <span id="callerName">—</span></p>
+      <p><strong>Reason:</strong> <span id="callReason">—</span></p>
+    </div>
+    <button id="answerBtn" disabled>✅ Answer</button>
+    <button id="endBtn" class="end" disabled>🔴 End</button>
+    <audio id="ringtone" src="waka-waka.mp3" loop></audio>
+  </div>
 
-  <!-- Firebase SDK -->
+  <!-- Firebase -->
   <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore-compat.js"></script>
 
@@ -42,77 +100,55 @@
     firebase.initializeApp(firebaseConfig);
     const db = firebase.firestore();
 
-    const servers = {
-      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
-      iceCandidatePoolSize: 10,
+    const servers = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
+    const pc = new RTCPeerConnection(servers);
+
+    const callDoc = db.collection("calls").doc("activeCall");
+    const offerCandidates = callDoc.collection("offerCandidates");
+    const answerCandidates = callDoc.collection("answerCandidates");
+
+    const ringtone = document.getElementById("ringtone");
+    const statusText = document.getElementById("status");
+    const answerBtn = document.getElementById("answerBtn");
+    const endBtn = document.getElementById("endBtn");
+    const callerNameDisplay = document.getElementById("callerName");
+    const callReasonDisplay = document.getElementById("callReason");
+    const callInfoBox = document.getElementById("callInfo");
+
+    let localStream;
+    let remoteStream = new MediaStream();
+
+    pc.ontrack = e => {
+      remoteStream.addTrack(e.track);
+      const audio = new Audio();
+      audio.srcObject = remoteStream;
+      audio.play();
     };
 
-    let pc, callDoc, offerCandidates, answerCandidates;
-    let localStream, remoteStream = new MediaStream();
-    let soundEnabled = false;
-
-    const statusEl = document.getElementById('status');
-    const answerBtn = document.getElementById('answerCall');
-    const endBtn = document.getElementById('endCall');
-    const remoteAudio = document.getElementById('remoteAudio');
-    const ringtone = document.getElementById('ringtone');
-    const enableSoundBtn = document.getElementById('enableSound');
-
-    remoteAudio.srcObject = remoteStream;
-
-    enableSoundBtn.onclick = () => {
-      ringtone.play().then(() => {
-        ringtone.pause();
-        soundEnabled = true;
-        enableSoundBtn.disabled = true;
-        enableSoundBtn.style.display = 'none';
-        listenForCalls(); // Start call listening after enabling sound
-      }).catch(err => {
-        alert("Click to enable ringtone. Your browser blocked auto-play.");
-      });
+    pc.onicecandidate = e => {
+      if (e.candidate) {
+        answerCandidates.add(e.candidate.toJSON());
+      }
     };
 
-    answerBtn.onclick = answerCall;
-    endBtn.onclick = endCall;
+    callDoc.onSnapshot(async snapshot => {
+      const data = snapshot.data();
+      if (data?.offer && data.ringing) {
+        // Show call info
+        callerNameDisplay.innerText = data.offer.callerName || "Unknown";
+        callReasonDisplay.innerText = data.offer.callReason || "No reason given";
+        callInfoBox.style.display = "block";
 
-    function listenForCalls() {
-      callDoc = db.collection('calls').doc('activeCall');
+        statusText.innerText = "📲 Incoming Call...";
+        answerBtn.disabled = false;
+        ringtone.play();
+      }
+    });
 
-      callDoc.onSnapshot(snapshot => {
-        const data = snapshot.data();
-        if (!data) {
-          stopCall("Call ended.");
-          return;
-        }
-
-        if (data.offer && !pc) {
-          statusEl.textContent = `Incoming call from ${data.offer.callerName} (${data.offer.reason})`;
-          answerBtn.disabled = false;
-          if (soundEnabled) {
-            ringtone.play().catch(console.warn);
-          }
-        }
-      });
-    }
-
-    async function answerCall() {
-      answerBtn.disabled = true;
+    answerBtn.onclick = async () => {
       ringtone.pause();
-      statusEl.textContent = "Answering call...";
-
-      pc = new RTCPeerConnection(servers);
-      offerCandidates = callDoc.collection('offerCandidates');
-      answerCandidates = callDoc.collection('answerCandidates');
-
-      pc.ontrack = event => {
-        remoteStream.addTrack(event.track);
-      };
-
-      pc.onicecandidate = event => {
-        if (event.candidate) {
-          answerCandidates.add(event.candidate.toJSON());
-        }
-      };
+      answerBtn.disabled = true;
+      endBtn.disabled = false;
 
       localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
       localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
@@ -122,53 +158,43 @@
 
       const answerDescription = await pc.createAnswer();
       await pc.setLocalDescription(answerDescription);
-      await callDoc.update({ answer: { type: answerDescription.type, sdp: answerDescription.sdp } });
+
+      await callDoc.update({
+        answer: {
+          type: answerDescription.type,
+          sdp: answerDescription.sdp
+        },
+        ringing: false
+      });
 
       offerCandidates.onSnapshot(snapshot => {
         snapshot.docChanges().forEach(change => {
-          if (change.type === 'added') {
+          if (change.type === "added") {
             pc.addIceCandidate(new RTCIceCandidate(change.doc.data()));
           }
         });
       });
 
-      statusEl.textContent = "Call connected.";
-      endBtn.disabled = false;
-    }
+      statusText.innerText = "✅ Call Connected!";
+    };
 
-    async function endCall() {
-      if (pc) pc.close();
+    endBtn.onclick = async () => {
+      pc.close();
+      if (localStream) localStream.getTracks().forEach(track => track.stop());
 
-      if (callDoc) {
-        await Promise.all([
-          deleteCollection(offerCandidates),
-          deleteCollection(answerCandidates),
-          callDoc.delete()
-        ]);
-      }
+      const clean = async (col) => {
+        const snap = await col.get();
+        return Promise.all(snap.docs.map(doc => doc.ref.delete()));
+      };
 
-      stopCall("Call ended.");
-    }
+      await Promise.all([
+        clean(offerCandidates),
+        clean(answerCandidates),
+        callDoc.delete()
+      ]);
 
-    async function deleteCollection(collection) {
-      const snapshot = await collection.get();
-      const deletions = snapshot.docs.map(doc => doc.ref.delete());
-      return Promise.all(deletions);
-    }
-
-    function stopCall(message) {
-      statusEl.textContent = message;
-      ringtone.pause();
-      answerBtn.disabled = true;
-      endBtn.disabled = true;
-      remoteStream.getTracks().forEach(track => track.stop());
-      localStream?.getTracks().forEach(track => track.stop());
-      remoteAudio.srcObject = null;
-      if (pc) {
-        pc.close();
-        pc = null;
-      }
-    }
+      location.reload();
+    };
   </script>
 </body>
 </html>
