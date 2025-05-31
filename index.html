@@ -2,79 +2,56 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Fantasy Call - Caller</title>
   <style>
     body {
       margin: 0;
       font-family: "Segoe UI", sans-serif;
-      background: #0d1418;
-      color: #e9edef;
+      background: #111;
+      color: #fff;
       display: flex;
       align-items: center;
       justify-content: center;
       height: 100vh;
     }
-
     .card {
-      background: #1f2c33;
+      background: #1e1e1e;
       padding: 30px;
-      border-radius: 20px;
+      border-radius: 16px;
       width: 90%;
-      max-width: 420px;
-      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+      max-width: 400px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
       text-align: center;
     }
-
     .card h2 {
       margin-bottom: 20px;
       font-weight: 500;
-      color: #25d366;
     }
-
-    input, textarea {
-      width: 100%;
-      padding: 14px;
-      margin-bottom: 16px;
-      border: none;
-      border-radius: 12px;
-      font-size: 15px;
-      background-color: #2e3b42;
-      color: #fff;
-      resize: none;
-    }
-
-    input::placeholder, textarea::placeholder {
-      color: #9eaeb5;
-    }
-
-    button {
+    input, textarea, button {
       width: 100%;
       padding: 12px;
+      margin-bottom: 16px;
       border: none;
-      border-radius: 12px;
+      border-radius: 8px;
       font-size: 16px;
-      font-weight: 600;
-      cursor: pointer;
-      margin-bottom: 10px;
-      transition: background 0.3s;
     }
-
+    textarea {
+      resize: none;
+      height: 80px;
+    }
     #startCall {
       background-color: #25d366;
       color: white;
     }
-
     #startCall:disabled {
-      background-color: #4caf8b;
+      background-color: #4c9f80;
       cursor: not-allowed;
     }
-
     #endCall {
       background-color: #f44336;
       color: white;
     }
-
     #endCall:disabled {
       background-color: #914747;
       cursor: not-allowed;
@@ -83,17 +60,15 @@
 </head>
 <body>
   <div class="card">
-    <h2>📞 Start Voice Call</h2>
+    <h2>Start Voice Call</h2>
     <input type="text" id="callerName" placeholder="Your name" />
-    <textarea id="callReason" rows="2" placeholder="Reason for the call"></textarea>
-    <button id="startCall">Start Call</button>
-    <button id="endCall" disabled>End Call</button>
+    <textarea id="callReason" placeholder="Reason for calling (optional)"></textarea>
+    <button id="startCall">📞 Start Call</button>
+    <button id="endCall" disabled>🔴 End Call</button>
   </div>
 
-  <!-- Firebase SDK -->
   <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore-compat.js"></script>
-
   <script>
     const firebaseConfig = {
       apiKey: "AIzaSyDzWe0sMFecKa9sHk30pXat5qrT4yDyuJ4",
@@ -106,32 +81,27 @@
 
     firebase.initializeApp(firebaseConfig);
     const db = firebase.firestore();
+    const servers = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
 
-    const servers = {
-      iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
-    };
-
-    let pc = new RTCPeerConnection(servers);
+    const pc = new RTCPeerConnection(servers);
     let callDoc, offerCandidates, answerCandidates;
 
     document.getElementById('startCall').onclick = async () => {
       const name = document.getElementById('callerName').value.trim();
       const reason = document.getElementById('callReason').value.trim();
+      if (!name) return alert("Please enter your name");
 
-      if (!name || !reason) {
-        alert("Please enter your name and the reason for the call.");
-        return;
-      }
-
-      const localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach(track => pc.addTrack(track, stream));
 
       callDoc = db.collection('calls').doc('activeCall');
       offerCandidates = callDoc.collection('offerCandidates');
       answerCandidates = callDoc.collection('answerCandidates');
 
       pc.onicecandidate = e => {
-        if (e.candidate) offerCandidates.add(e.candidate.toJSON());
+        if (e.candidate) {
+          offerCandidates.add(e.candidate.toJSON());
+        }
       };
 
       const offer = await pc.createOffer();
@@ -169,17 +139,13 @@
     };
 
     document.getElementById('endCall').onclick = async () => {
-      if (pc) pc.close();
+      pc.close();
       if (callDoc) {
-        const clean = async (col) => {
+        const clean = async col => {
           const snap = await col.get();
           return Promise.all(snap.docs.map(doc => doc.ref.delete()));
         };
-        await Promise.all([
-          clean(offerCandidates),
-          clean(answerCandidates),
-          callDoc.delete()
-        ]);
+        await Promise.all([clean(offerCandidates), clean(answerCandidates), callDoc.delete()]);
       }
       location.reload();
     };
