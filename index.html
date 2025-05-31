@@ -2,25 +2,93 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Caller</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Fantasy Call - Caller</title>
   <style>
-    #waveform {
-      width: 300px;
-      height: 50px;
-      background: #222;
+    body {
+      margin: 0;
+      font-family: "Segoe UI", sans-serif;
+      background: #0d1418;
+      color: #e9edef;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+    }
+
+    .card {
+      background: #1f2c33;
+      padding: 30px;
+      border-radius: 20px;
+      width: 90%;
+      max-width: 420px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+      text-align: center;
+    }
+
+    .card h2 {
+      margin-bottom: 20px;
+      font-weight: 500;
+      color: #25d366;
+    }
+
+    input, textarea {
+      width: 100%;
+      padding: 14px;
+      margin-bottom: 16px;
+      border: none;
+      border-radius: 12px;
+      font-size: 15px;
+      background-color: #2e3b42;
+      color: #fff;
+      resize: none;
+    }
+
+    input::placeholder, textarea::placeholder {
+      color: #9eaeb5;
+    }
+
+    button {
+      width: 100%;
+      padding: 12px;
+      border: none;
+      border-radius: 12px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      margin-bottom: 10px;
+      transition: background 0.3s;
+    }
+
+    #startCall {
+      background-color: #25d366;
+      color: white;
+    }
+
+    #startCall:disabled {
+      background-color: #4caf8b;
+      cursor: not-allowed;
+    }
+
+    #endCall {
+      background-color: #f44336;
+      color: white;
+    }
+
+    #endCall:disabled {
+      background-color: #914747;
+      cursor: not-allowed;
     }
   </style>
 </head>
 <body>
-  <h2>Start a Call</h2>
-  <input type="text" id="callerName" placeholder="Your Name" /><br />
-  <input type="text" id="reason" placeholder="Reason for Call" /><br />
-  <button id="startCall">Start Call</button>
-  <button id="endCall" disabled>End Call</button>
-  <button id="shareScreen" disabled>Share Screen</button>
-  <audio id="remoteAudio" autoplay></audio>
-  <canvas id="waveform"></canvas>
+  <div class="card">
+    <h2>📞 Start Voice Call</h2>
+    <input type="text" id="callerName" placeholder="Your name" />
+    <textarea id="callReason" rows="2" placeholder="Reason for the call"></textarea>
+    <button id="startCall">Start Call</button>
+    <button id="endCall" disabled>End Call</button>
+  </div>
 
   <!-- Firebase SDK -->
   <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-app-compat.js"></script>
@@ -40,143 +108,81 @@
     const db = firebase.firestore();
 
     const servers = {
-      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
-      iceCandidatePoolSize: 10,
+      iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
     };
 
-    let pc;
+    let pc = new RTCPeerConnection(servers);
     let callDoc, offerCandidates, answerCandidates;
-    let localStream, remoteStream = new MediaStream();
 
-    const remoteAudio = document.getElementById('remoteAudio');
-    const waveformCanvas = document.getElementById('waveform');
-    const ctx = waveformCanvas.getContext('2d');
+    document.getElementById('startCall').onclick = async () => {
+      const name = document.getElementById('callerName').value.trim();
+      const reason = document.getElementById('callReason').value.trim();
 
-    document.getElementById('startCall').onclick = startCall;
-    document.getElementById('endCall').onclick = endCall;
-    document.getElementById('shareScreen').onclick = shareScreen;
-
-    async function initMediaAndWaveform() {
-      try {
-        localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        pc = new RTCPeerConnection(servers);
-        localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
-        setupWaveform(localStream);
-
-        pc.ontrack = (event) => {
-          remoteStream.addTrack(event.track);
-        };
-        remoteAudio.srcObject = remoteStream;
-      } catch (error) {
-        alert("Microphone access denied or unavailable.");
-        console.error(error);
-      }
-    }
-
-    function setupWaveform(stream) {
-      const audioCtx = new AudioContext();
-      const source = audioCtx.createMediaStreamSource(stream);
-      const analyser = audioCtx.createAnalyser();
-      analyser.fftSize = 256;
-      const dataArray = new Uint8Array(analyser.frequencyBinCount);
-      source.connect(analyser);
-
-      function draw() {
-        requestAnimationFrame(draw);
-        analyser.getByteFrequencyData(dataArray);
-        ctx.fillStyle = '#222';
-        ctx.fillRect(0, 0, waveformCanvas.width, waveformCanvas.height);
-        ctx.fillStyle = '#0f0';
-        for (let i = 0; i < dataArray.length; i++) {
-          const barHeight = dataArray[i] / 2;
-          ctx.fillRect(i * 3, waveformCanvas.height - barHeight, 2, barHeight);
-        }
-      }
-      draw();
-    }
-
-    async function startCall() {
-      const callerName = document.getElementById('callerName').value.trim();
-      const reason = document.getElementById('reason').value.trim();
-      if (!callerName || !reason) {
-        alert("Name and reason required");
+      if (!name || !reason) {
+        alert("Please enter your name and the reason for the call.");
         return;
       }
 
-      await initMediaAndWaveform();
+      const localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
 
       callDoc = db.collection('calls').doc('activeCall');
       offerCandidates = callDoc.collection('offerCandidates');
       answerCandidates = callDoc.collection('answerCandidates');
 
-      document.getElementById('startCall').disabled = true;
-      document.getElementById('endCall').disabled = false;
-      document.getElementById('shareScreen').disabled = false;
+      pc.onicecandidate = e => {
+        if (e.candidate) offerCandidates.add(e.candidate.toJSON());
+      };
 
-      const offerDescription = await pc.createOffer();
-      await pc.setLocalDescription(offerDescription);
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
 
       await callDoc.set({
         offer: {
-          type: offerDescription.type,
-          sdp: offerDescription.sdp,
-          callerName,
-          reason
-        }
-      });
-
-      pc.onicecandidate = e => {
-        if (e.candidate) {
-          offerCandidates.add(e.candidate.toJSON());
-        }
-      };
-
-      callDoc.onSnapshot(snapshot => {
-        const data = snapshot.data();
-        if (!pc.currentRemoteDescription && data?.answer) {
-          pc.setRemoteDescription(new RTCSessionDescription(data.answer));
-        }
+          type: offer.type,
+          sdp: offer.sdp,
+          callerName: name,
+          callReason: reason
+        },
+        ringing: true,
+        timestamp: Date.now()
       });
 
       answerCandidates.onSnapshot(snapshot => {
         snapshot.docChanges().forEach(change => {
-          if (change.type === 'added') {
-            pc.addIceCandidate(new RTCIceCandidate(change.doc.data()));
+          if (change.type === "added") {
+            const candidate = new RTCIceCandidate(change.doc.data());
+            pc.addIceCandidate(candidate);
           }
         });
       });
-    }
 
-    async function shareScreen() {
-      try {
-        const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
-        screenStream.getTracks().forEach(track => pc.addTrack(track, screenStream));
-      } catch (err) {
-        alert("Screen sharing failed.");
-        console.error(err);
-      }
-    }
+      callDoc.onSnapshot(snapshot => {
+        const data = snapshot.data();
+        if (data?.answer && !pc.currentRemoteDescription) {
+          pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+        }
+      });
 
-    async function endCall() {
+      document.getElementById('startCall').disabled = true;
+      document.getElementById('endCall').disabled = false;
+    };
+
+    document.getElementById('endCall').onclick = async () => {
       if (pc) pc.close();
-
       if (callDoc) {
+        const clean = async (col) => {
+          const snap = await col.get();
+          return Promise.all(snap.docs.map(doc => doc.ref.delete()));
+        };
         await Promise.all([
-          deleteCollection(offerCandidates),
-          deleteCollection(answerCandidates),
+          clean(offerCandidates),
+          clean(answerCandidates),
           callDoc.delete()
         ]);
       }
-
-      alert("Call ended.");
       location.reload();
-    }
-
-    async function deleteCollection(collection) {
-      const snapshot = await collection.get();
-      const deletions = snapshot.docs.map(doc => doc.ref.delete());
-      return Promise.all(deletions);
-    }
+    };
   </script>
 </body>
 </html>
