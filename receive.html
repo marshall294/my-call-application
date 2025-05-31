@@ -1,83 +1,70 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Fantasy Call - Receiver</title>
+  <meta charset="UTF-8">
+  <title>Receiver</title>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore-compat.js"></script>
+  <script src="https://webrtc.github.io/adapter/adapter-latest.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Roboto&display=swap" rel="stylesheet">
   <style>
     body {
+      font-family: 'Roboto', sans-serif;
+      background: #d0f0c0;
       margin: 0;
-      font-family: "Segoe UI", sans-serif;
-      background: #121212;
-      color: white;
       display: flex;
+      flex-direction: column;
       align-items: center;
       justify-content: center;
       height: 100vh;
     }
-
-    .card {
-      background: #1e1e1e;
-      padding: 30px;
-      border-radius: 16px;
-      width: 90%;
-      max-width: 400px;
-      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+    .receiver-container {
+      background: #fff;
+      border-radius: 15px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+      padding: 20px;
+      width: 360px;
       text-align: center;
     }
-
-    h2 {
-      font-weight: 500;
-      margin-bottom: 20px;
+    button.answer {
+      background-color: #25d366;
+      color: #fff;
+      border: none;
     }
-
-    p {
-      margin: 10px 0;
-      font-size: 16px;
+    button.end {
+      background-color: #ff4d4f;
+      color: #fff;
+      border: none;
     }
-
     button {
       width: 100%;
       padding: 12px;
-      margin-top: 20px;
-      font-size: 16px;
-      font-weight: 600;
-      border: none;
+      margin-top: 10px;
       border-radius: 8px;
-      background: #25d366;
-      color: white;
-      cursor: pointer;
-      transition: background 0.3s;
+      font-size: 16px;
     }
-
-    button.end {
-      background: #e53935;
+    #status {
+      margin-top: 10px;
+      font-weight: bold;
+      color: #555;
     }
-
-    button:disabled {
-      background: #4c9f80;
-      cursor: not-allowed;
-    }
-
-    audio {
-      display: none;
+    video {
+      width: 100%;
+      border-radius: 10px;
+      margin-top: 15px;
     }
   </style>
 </head>
 <body>
-  <div class="card">
-    <h2>📞 Incoming Call</h2>
-    <p id="status">Waiting for a call...</p>
-    <p id="callerName"></p>
-    <p id="callReason"></p>
-    <button id="answerBtn" disabled>✅ Answer</button>
-    <button id="endBtn" class="end" disabled>🔴 End</button>
-    <audio id="ringtone" src="waka-waka.mp3" loop></audio>
+  <div class="receiver-container">
+    <h2>📥 Incoming Call</h2>
+    <div id="callerInfo">Waiting for calls...</div>
+    <button class="answer" onclick="answerCall()">Answer Call</button>
+    <button class="end" onclick="endCall()">End Call</button>
+    <div id="status"></div>
+    <video id="localVideo" autoplay muted playsinline></video>
+    <video id="remoteVideo" autoplay playsinline></video>
   </div>
-
-  <!-- Firebase -->
-  <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore-compat.js"></script>
 
   <script>
     const firebaseConfig = {
@@ -92,104 +79,90 @@
     firebase.initializeApp(firebaseConfig);
     const db = firebase.firestore();
 
-    const servers = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
-    const pc = new RTCPeerConnection(servers);
+    const callerInfoDiv = document.getElementById('callerInfo');
+    const statusDiv = document.getElementById('status');
+    const localVideo = document.getElementById('localVideo');
+    const remoteVideo = document.getElementById('remoteVideo');
 
-    const callDoc = db.collection("calls").doc("activeCall");
-    const offerCandidates = callDoc.collection("offerCandidates");
-    const answerCandidates = callDoc.collection("answerCandidates");
-
-    const ringtone = document.getElementById("ringtone");
-    const statusEl = document.getElementById("status");
-    const answerBtn = document.getElementById("answerBtn");
-    const endBtn = document.getElementById("endBtn");
-    const callerNameEl = document.getElementById("callerName");
-    const callReasonEl = document.getElementById("callReason");
-
+    let callDoc, peerConnection;
     let localStream;
-    let remoteStream = new MediaStream();
 
-    pc.ontrack = e => {
-      remoteStream.addTrack(e.track);
-      const audio = new Audio();
-      audio.srcObject = remoteStream;
-      audio.play();
-    };
+    const config = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 
-    pc.onicecandidate = e => {
-      if (e.candidate) {
-        answerCandidates.add(e.candidate.toJSON());
-      }
-    };
+    db.collection("calls")
+      .orderBy("timestamp", "desc")
+      .limit(1)
+      .onSnapshot(snapshot => {
+        if (!snapshot.empty) {
+          callDoc = snapshot.docs[0].ref;
+          const data = snapshot.docs[0].data();
 
-    // Listen for offer
-    callDoc.onSnapshot(async snapshot => {
-      const data = snapshot.data();
-      if (data?.offer && data.ringing) {
-        statusEl.innerText = "📲 Incoming call...";
-        callerNameEl.innerText = "From: " + (data.offer.callerName || "Unknown");
-        callReasonEl.innerText = data.offer.callReason ? "Reason: " + data.offer.callReason : "";
-        answerBtn.disabled = false;
+          if (!data.ended && data.status === 'ringing') {
+            callerInfoDiv.innerText = `${data.callerName} is calling: ${data.reason}`;
+            new Audio('https://actions.google.com/sounds/v1/alarms/phone_alerts_and_ringtones.ogg').play();
+          }
+        }
+      });
 
-        // Play ringtone
-        try { ringtone.play(); } catch (e) { console.log("Ringtone autoplay blocked"); }
-      }
-    });
+    async function answerCall() {
+      localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
 
-    // Answer call
-    answerBtn.onclick = async () => {
-      ringtone.pause();        // ✅ Stop ringtone
-      ringtone.currentTime = 0;
+      peerConnection = new RTCPeerConnection(config);
+      localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
 
-      answerBtn.disabled = true;
-      endBtn.disabled = false;
+      peerConnection.onicecandidate = e => {
+        if (e.candidate) {
+          callDoc.collection('answerCandidates').add(e.candidate.toJSON());
+        }
+      };
 
-      localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+      peerConnection.ontrack = e => {
+        remoteVideo.srcObject = e.streams[0];
+      };
+
+      localVideo.srcObject = localStream;
 
       const callData = (await callDoc.get()).data();
-      await pc.setRemoteDescription(new RTCSessionDescription(callData.offer));
+      await peerConnection.setRemoteDescription(new RTCSessionDescription(callData.offer));
 
-      const answerDescription = await pc.createAnswer();
-      await pc.setLocalDescription(answerDescription);
+      const answer = await peerConnection.createAnswer();
+      await peerConnection.setLocalDescription(answer);
 
       await callDoc.update({
         answer: {
-          type: answerDescription.type,
-          sdp: answerDescription.sdp
+          type: answer.type,
+          sdp: answer.sdp
         },
-        ringing: false
+        status: 'answered'
       });
 
-      offerCandidates.onSnapshot(snapshot => {
+      callDoc.collection('offerCandidates').onSnapshot(snapshot => {
         snapshot.docChanges().forEach(change => {
-          if (change.type === "added") {
-            pc.addIceCandidate(new RTCIceCandidate(change.doc.data()));
+          if (change.type === 'added') {
+            const data = change.doc.data();
+            peerConnection.addIceCandidate(new RTCIceCandidate(data));
           }
         });
       });
 
-      statusEl.innerText = "✅ Call connected!";
-    };
+      callDoc.onSnapshot(snapshot => {
+        const data = snapshot.data();
+        if (data.ended) {
+          statusDiv.innerText = "❌ Call Ended";
+          peerConnection?.close();
+        }
+      });
 
-    // End call
-    endBtn.onclick = async () => {
-      pc.close();
-      if (localStream) localStream.getTracks().forEach(track => track.stop());
+      statusDiv.innerText = "✅ Call Connected";
+    }
 
-      const clean = async (col) => {
-        const snap = await col.get();
-        return Promise.all(snap.docs.map(doc => doc.ref.delete()));
-      };
-
-      await Promise.all([
-        clean(offerCandidates),
-        clean(answerCandidates),
-        callDoc.delete()
-      ]);
-
-      location.reload();
-    };
+    async function endCall() {
+      if (callDoc) {
+        await callDoc.update({ ended: true });
+        peerConnection?.close();
+        statusDiv.innerText = "❌ Call Ended";
+      }
+    }
   </script>
 </body>
 </html>
