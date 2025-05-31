@@ -21,7 +21,7 @@
       padding: 30px;
       border-radius: 16px;
       width: 90%;
-      max-width: 420px;
+      max-width: 400px;
       box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
       text-align: center;
     }
@@ -33,14 +33,7 @@
 
     p {
       margin: 10px 0;
-      font-size: 15px;
-    }
-
-    .info {
-      margin-top: 10px;
-      background: #2a2a2a;
-      padding: 12px;
-      border-radius: 10px;
+      font-size: 16px;
     }
 
     button {
@@ -54,6 +47,7 @@
       background: #25d366;
       color: white;
       cursor: pointer;
+      transition: background 0.3s;
     }
 
     button.end {
@@ -74,10 +68,8 @@
   <div class="card">
     <h2>📞 Incoming Call</h2>
     <p id="status">Waiting for a call...</p>
-    <div id="callInfo" class="info" style="display: none;">
-      <p><strong>Caller:</strong> <span id="callerName">—</span></p>
-      <p><strong>Reason:</strong> <span id="callReason">—</span></p>
-    </div>
+    <p id="callerName"></p>
+    <p id="callReason"></p>
     <button id="answerBtn" disabled>✅ Answer</button>
     <button id="endBtn" class="end" disabled>🔴 End</button>
     <audio id="ringtone" src="waka-waka.mp3" loop></audio>
@@ -108,12 +100,11 @@
     const answerCandidates = callDoc.collection("answerCandidates");
 
     const ringtone = document.getElementById("ringtone");
-    const statusText = document.getElementById("status");
+    const statusEl = document.getElementById("status");
     const answerBtn = document.getElementById("answerBtn");
     const endBtn = document.getElementById("endBtn");
-    const callerNameDisplay = document.getElementById("callerName");
-    const callReasonDisplay = document.getElementById("callReason");
-    const callInfoBox = document.getElementById("callInfo");
+    const callerNameEl = document.getElementById("callerName");
+    const callReasonEl = document.getElementById("callReason");
 
     let localStream;
     let remoteStream = new MediaStream();
@@ -131,22 +122,25 @@
       }
     };
 
+    // Listen for offer
     callDoc.onSnapshot(async snapshot => {
       const data = snapshot.data();
       if (data?.offer && data.ringing) {
-        // Show call info
-        callerNameDisplay.innerText = data.offer.callerName || "Unknown";
-        callReasonDisplay.innerText = data.offer.callReason || "No reason given";
-        callInfoBox.style.display = "block";
-
-        statusText.innerText = "📲 Incoming Call...";
+        statusEl.innerText = "📲 Incoming call...";
+        callerNameEl.innerText = "From: " + (data.offer.callerName || "Unknown");
+        callReasonEl.innerText = data.offer.callReason ? "Reason: " + data.offer.callReason : "";
         answerBtn.disabled = false;
-        ringtone.play();
+
+        // Play ringtone
+        try { ringtone.play(); } catch (e) { console.log("Ringtone autoplay blocked"); }
       }
     });
 
+    // Answer call
     answerBtn.onclick = async () => {
-      ringtone.pause();
+      ringtone.pause();        // ✅ Stop ringtone
+      ringtone.currentTime = 0;
+
       answerBtn.disabled = true;
       endBtn.disabled = false;
 
@@ -175,9 +169,10 @@
         });
       });
 
-      statusText.innerText = "✅ Call Connected!";
+      statusEl.innerText = "✅ Call connected!";
     };
 
+    // End call
     endBtn.onclick = async () => {
       pc.close();
       if (localStream) localStream.getTracks().forEach(track => track.stop());
