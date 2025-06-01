@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>In Call</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { font-family: 'Inter', sans-serif; }
+    .pulse {
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+  </style>
+</head>
+<body class="flex items-center justify-center h-screen bg-gray-100">
+  <div class="bg-white shadow-lg rounded-xl p-8 w-full max-w-md text-center space-y-4">
+    <h1 class="text-xl font-bold">Live Audio Call</h1>
+    <p id="status" class="text-green-600 pulse">🔗 Connecting...</p>
+    <p id="timer" class="text-gray-600">Call Duration: 00:00</p>
+    <div class="flex justify-center gap-4">
+      <button id="muteBtn" class="bg-yellow-400 text-black px-4 py-2 rounded hover:bg-yellow-500">🔇 Mute</button>
+      <button id="endCallBtn" class="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600">🔴 End Call</button>
+    </div>
+  </div>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.11.0/firebase-app.js";
+    import { getFirestore, doc, deleteDoc, getDoc } from "https://www.gstatic.com/firebasejs/10.11.0/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyDzWe0sMFecKa9sHk30pXat5qrT4yDyuJ4",
+      authDomain: "soccer2-c47c2.firebaseapp.com",
+      projectId: "soccer2-c47c2",
+      storageBucket: "soccer2-c47c2.appspot.com",
+      messagingSenderId: "942310698005",
+      appId: "1:942310698005:web:2f5230da671ef0b47db21c"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+    const callDocRef = doc(db, "calls", "activeCall");
+
+    const role = new URLSearchParams(window.location.search).get("role");
+    const muteBtn = document.getElementById("muteBtn");
+    const endCallBtn = document.getElementById("endCallBtn");
+    const statusText = document.getElementById("status");
+    const timerEl = document.getElementById("timer");
+
+    let pc = new RTCPeerConnection();
+    let localStream;
+    let remoteStream = new MediaStream();
+    let isMuted = false;
+    let callTimer = 0;
+    let timerInterval;
+
+    // Setup timer
+    function startTimer() {
+      timerInterval = setInterval(() => {
+        callTimer++;
+        const minutes = String(Math.floor(callTimer / 60)).padStart(2, '0');
+        const seconds = String(callTimer % 60).padStart(2, '0');
+        timerEl.textContent = `Call Duration: ${minutes}:${seconds}`;
+      }, 1000);
+    }
+
+    function stopTimer() {
+      clearInterval(timerInterval);
+    }
+
+    // Get local audio
+    async function getMedia() {
+      localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+    }
+
+    function setupRemoteAudio() {
+      pc.ontrack = event => {
+        event.streams[0].getTracks().forEach(track => remoteStream.addTrack(track));
+      };
+      const remoteAudio = new Audio();
+      remoteAudio.srcObject = remoteStream;
+      remoteAudio.play();
+    }
+
+    async function initCall() {
+      await getMedia();
+      setupRemoteAudio();
+
+      const callSnap = await getDoc(callDocRef);
+      const data = callSnap.data();
+
+      if (role === "caller") {
+        const offer = data.offer;
+        await pc.setLocalDescription(new RTCSessionDescription(offer));
+
+        // Wait for answer
+        const unsub = callSnap.ref.onSnapshot(async snap => {
+          const updated = snap.data();
+          if (updated?.answer && !pc.currentRemoteDescription) {
+            await pc.setRemoteDescription(new RTCSessionDescription(updated.answer));
+            statusText.textContent = "✅ Connected";
+            startTimer();
+            unsub(); // stop listening
+          }
+        });
+      } else if (role === "receiver") {
+        const offer = data.offer;
+        await pc.setRemoteDescription(new RTCSessionDescription(offer));
+
+        const answer = data.answer;
+        if (!pc.currentLocalDescription && answer) {
+          await pc.setLocalDescription(new RTCSessionDescription(answer));
+          statusText.textContent = "✅ Connected";
+          startTimer();
+        }
+      }
+    }
+
+    muteBtn.onclick = () => {
+      isMuted = !isMuted;
+      localStream.getAudioTracks()[0].enabled = !isMuted;
+      muteBtn.textContent = isMuted ? "🔊 Unmute" : "🔇 Mute";
+    };
+
+    endCallBtn.onclick = async () => {
+      stopTimer();
+      pc.close();
+      localStream.getTracks().forEach(track => track.stop());
+      remoteStream.getTracks().forEach(track => track.stop());
+      await deleteDoc(callDocRef);
+      window.location.href = "caller.html";
+    };
+
+    window.addEventListener("beforeunload", async () => {
+      stopTimer();
+      pc.close();
+      await deleteDoc(callDocRef);
+    });
+
+    initCall();
+  </script>
+</body>
+</html>

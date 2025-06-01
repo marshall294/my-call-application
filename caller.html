@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Caller - Start Audio Call</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { font-family: 'Inter', sans-serif; }
+  </style>
+</head>
+<body class="flex items-center justify-center h-screen bg-gray-100">
+  <div class="bg-white shadow-xl rounded-xl p-8 w-full max-w-md text-center space-y-4">
+    <h1 class="text-xl font-semibold">Start Audio Call</h1>
+    <input id="callerName" class="border w-full p-2 rounded" placeholder="Your Name" />
+    <input id="reason" class="border w-full p-2 rounded" placeholder="Reason for Call" />
+    <button id="startCall" class="bg-blue-500 text-white w-full py-2 rounded hover:bg-blue-600">
+      Start Call
+    </button>
+    <p id="status" class="text-sm text-gray-600 mt-4 hidden">Waiting for receiver to answer...</p>
+  </div>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.11.0/firebase-app.js";
+    import { getFirestore, doc, setDoc, onSnapshot, deleteDoc } from "https://www.gstatic.com/firebasejs/10.11.0/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyDzWe0sMFecKa9sHk30pXat5qrT4yDyuJ4",
+      authDomain: "soccer2-c47c2.firebaseapp.com",
+      projectId: "soccer2-c47c2",
+      storageBucket: "soccer2-c47c2.appspot.com",
+      messagingSenderId: "942310698005",
+      appId: "1:942310698005:web:2f5230da671ef0b47db21c"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+    const callDoc = doc(db, "calls", "activeCall");
+
+    const startCallBtn = document.getElementById("startCall");
+    const statusText = document.getElementById("status");
+
+    let pc;
+
+    async function startCall() {
+      const callerName = document.getElementById("callerName").value.trim();
+      const reason = document.getElementById("reason").value.trim();
+      if (!callerName || !reason) return alert("Please fill in all fields.");
+
+      // Create PeerConnection
+      pc = new RTCPeerConnection();
+
+      // Capture audio
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      stream.getTracks().forEach(track => pc.addTrack(track, stream));
+
+      // Create offer
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+
+      // Write offer to Firestore
+      await setDoc(callDoc, {
+        caller: callerName,
+        reason: reason,
+        status: "ringing",
+        offer: {
+          type: offer.type,
+          sdp: offer.sdp
+        }
+      });
+
+      statusText.classList.remove("hidden");
+
+      // Listen for answer
+      onSnapshot(callDoc, async (docSnap) => {
+        const data = docSnap.data();
+        if (!pc.currentRemoteDescription && data?.answer) {
+          const remoteDesc = new RTCSessionDescription(data.answer);
+          await pc.setRemoteDescription(remoteDesc);
+          window.location.href = "in-call.html?role=caller";
+        }
+      });
+    }
+
+    startCallBtn.addEventListener("click", startCall);
+
+    // Clean up on leave
+    window.addEventListener("beforeunload", async () => {
+      await deleteDoc(callDoc);
+    });
+  </script>
+</body>
+</html>

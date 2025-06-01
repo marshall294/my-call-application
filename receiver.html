@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Receiver - Incoming Call</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { font-family: 'Inter', sans-serif; }
+    #controls button { transition: transform 0.2s ease; }
+    #controls button:hover { transform: scale(1.05); }
+  </style>
+</head>
+<body class="flex items-center justify-center h-screen bg-gray-100">
+  <div class="bg-white shadow-xl rounded-xl p-8 w-full max-w-md text-center space-y-4 hidden" id="callUI">
+    <h1 class="text-xl font-semibold">Incoming Call</h1>
+    <p id="callerInfo" class="text-gray-700"></p>
+    <div id="controls" class="flex justify-center gap-4 mt-4">
+      <button id="answerBtn" class="bg-green-500 text-white px-4 py-2 rounded-lg hover:bg-green-600 flex items-center gap-2">
+        ✅ Answer
+      </button>
+      <button id="endBtn" class="bg-red-500 text-white px-4 py-2 rounded-lg hover:bg-red-600 flex items-center gap-2">
+        ❌ End
+      </button>
+    </div>
+  </div>
+
+  <audio id="ringtone" loop>
+    <source src="waka-waka.mp3" type="audio/mpeg" />
+  </audio>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.11.0/firebase-app.js";
+    import { getFirestore, doc, onSnapshot, updateDoc, deleteDoc } from "https://www.gstatic.com/firebasejs/10.11.0/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyDzWe0sMFecKa9sHk30pXat5qrT4yDyuJ4",
+      authDomain: "soccer2-c47c2.firebaseapp.com",
+      projectId: "soccer2-c47c2",
+      storageBucket: "soccer2-c47c2.appspot.com",
+      messagingSenderId: "942310698005",
+      appId: "1:942310698005:web:2f5230da671ef0b47db21c"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+    const callDoc = doc(db, "calls", "activeCall");
+
+    const callerInfo = document.getElementById("callerInfo");
+    const ringtone = document.getElementById("ringtone");
+    const callUI = document.getElementById("callUI");
+    const answerBtn = document.getElementById("answerBtn");
+    const endBtn = document.getElementById("endBtn");
+
+    let pc;
+    let stream;
+
+    onSnapshot(callDoc, async (docSnap) => {
+      const data = docSnap.data();
+      if (!data || data.status !== "ringing") return;
+
+      callUI.classList.remove("hidden");
+      callerInfo.textContent = `${data.caller} is calling: "${data.reason}"`;
+      ringtone.play();
+
+      // Prepare PeerConnection and answer when button clicked
+      answerBtn.onclick = async () => {
+        ringtone.pause();
+
+        pc = new RTCPeerConnection();
+
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        stream.getTracks().forEach(track => pc.addTrack(track, stream));
+
+        await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+
+        await updateDoc(callDoc, {
+          answer: {
+            type: answer.type,
+            sdp: answer.sdp
+          },
+          status: "answered"
+        });
+
+        window.location.href = "in-call.html?role=receiver";
+      };
+
+      endBtn.onclick = async () => {
+        ringtone.pause();
+        await deleteDoc(callDoc);
+        location.reload();
+      };
+    });
+
+    window.addEventListener("beforeunload", async () => {
+      await deleteDoc(callDoc);
+    });
+  </script>
+</body>
+</html>
